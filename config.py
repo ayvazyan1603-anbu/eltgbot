@@ -23,6 +23,15 @@ if ADMIN_IDS_RAW:
         if aid.isdigit():
             ADMIN_IDS.add(int(aid))
 
+# Настройки FreeKassa
+FK_MERCHANT_ID = os.getenv("FK_MERCHANT_ID", "").strip()
+FK_SECRET_1 = os.getenv("FK_SECRET_1", "").strip()
+FK_SECRET_2 = os.getenv("FK_SECRET_2", "").strip()
+FK_API_KEY = os.getenv("FK_API_KEY", "").strip()
+# Railway автоматически передает порт в переменную PORT
+WEBHOOK_PORT = int(os.getenv("PORT") or os.getenv("WEBHOOK_PORT") or 8080)
+WEBHOOK_HOST = os.getenv("WEBHOOK_HOST", "0.0.0.0").strip()
+
 def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
 

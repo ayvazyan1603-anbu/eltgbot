@@ -10,7 +10,7 @@ from states import AddProductState, EditProductState, AdminOrderState
 from keyboards import (
     get_admin_main_keyboard,
     get_cancel_fsm_keyboard,
-    get_skip_photo_keyboard
+    get_skip_or_cancel_keyboard
 )
 
 router = Router()
@@ -54,14 +54,16 @@ async def cb_admin_stats(callback: CallbackQuery):
     stats = await db.get_bot_stats()
     total_users = stats["total_users"]
     total_orders = stats["total_orders"]
+    paid_orders = stats.get("paid_orders", 0)
     products = stats["products"]
 
     text_lines = [
         "📊 <b>СТАТИСТИКА БОТА:</b>\n",
-        f"👥 <b>Всего пользователей (заходов):</b> {total_users}",
-        f"🛍 <b>Всего оформлено заказов:</b> {total_orders}",
+        f"👥 <b>Всего пользователей:</b> {total_users}",
+        f"🛍 <b>Всего заказов:</b> {total_orders}",
+        f"💳 <b>Оплаченных заказов:</b> {paid_orders}",
         f"📦 <b>Всего товаров в базе:</b> {len(products)}\n",
-        "📈 <b>Аналитика по товарам:</b>"
+        "📈 <b>Детализация по товарам:</b>"
     ]
 
     if not products:
@@ -69,7 +71,7 @@ async def cb_admin_stats(callback: CallbackQuery):
     else:
         for idx, p in enumerate(products, 1):
             text_lines.append(
-                f"\n<b>{idx}. {p['title']}</b>\n"
+                f"\n<b>{idx}. {p['title']}</b> ({p.get('category_type', '')} > {p.get('brand', '')})\n"
                 f"   👁 Просмотров: <b>{p['views_count']}</b> | 💳 Покупок: <b>{p['buys_count']}</b>\n"
                 f"   📦 Остаток: <b>{p['stock_count']} шт.</b> | 💰 Цена: <b>{p['price']:g} ₽</b>"
             )
@@ -97,7 +99,7 @@ async def cb_admin_add_product(callback: CallbackQuery, state: FSMContext):
     
     await state.set_state(AddProductState.waiting_for_title)
     await callback.message.answer(
-        "📝 <b>Шаг 1 из 6:</b> Введите <b>название</b> товара:",
+        "📝 <b>Шаг 1 из 9:</b> Введите <b>название</b> товара:",
         parse_mode="HTML",
         reply_markup=get_cancel_fsm_keyboard()
     )
@@ -112,7 +114,7 @@ async def process_add_title(message: Message, state: FSMContext):
     await state.update_data(title=title)
     await state.set_state(AddProductState.waiting_for_description)
     await message.answer(
-        "📄 <b>Шаг 2 из 6:</b> Введите <b>описание</b> товара:",
+        "📄 <b>Шаг 2 из 9:</b> Введите <b>описание</b> товара:",
         parse_mode="HTML",
         reply_markup=get_cancel_fsm_keyboard()
     )
@@ -123,7 +125,7 @@ async def process_add_description(message: Message, state: FSMContext):
     await state.update_data(description=desc)
     await state.set_state(AddProductState.waiting_for_price)
     await message.answer(
-        "💰 <b>Шаг 3 из 6:</b> Введите <b>цену</b> товара в рублях (только число, например: <code>500</code>):",
+        "💰 <b>Шаг 3 из 9:</b> Введите <b>цену</b> товара в рублях (только число, например: <code>4500</code>):",
         parse_mode="HTML",
         reply_markup=get_cancel_fsm_keyboard()
     )
@@ -135,38 +137,178 @@ async def process_add_price(message: Message, state: FSMContext):
         if price < 0:
             raise ValueError()
     except ValueError:
-        await message.answer("❌ Неверный формат цены. Введите число (например: <code>450</code>):", parse_mode="HTML", reply_markup=get_cancel_fsm_keyboard())
+        await message.answer("❌ Неверный формат цены. Введите число (например: <code>4500</code>):", parse_mode="HTML", reply_markup=get_cancel_fsm_keyboard())
         return
     
     await state.update_data(price=price)
+    await show_category_selection(message, state)
+
+async def show_category_selection(message_or_callback, state: FSMContext):
+    """Шаг выбора типа продукта (Обувь, Одежда... или создание нового)"""
+    categories = await db.get_all_category_types()
+    await state.set_state(AddProductState.waiting_for_category_choice)
+
+    buttons = []
+    row = []
+    for c in categories:
+        row.append(InlineKeyboardButton(text=c, callback_data=f"adm_setcat_{c}"))
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+
+    buttons.append([InlineKeyboardButton(text="➕ Создать новый тип", callback_data="adm_create_new_cat")])
+    buttons.append([InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_action")])
+
+    kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+    text = "📁 <b>Шаг 4 из 9:</b> Выберите <b>тип продукта</b> или создайте новый:"
+    
+    if isinstance(message_or_callback, Message):
+        await message_or_callback.answer(text, parse_mode="HTML", reply_markup=kb)
+    else:
+        await message_or_callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
+
+@router.callback_query(AddProductState.waiting_for_category_choice, F.data.startswith("adm_setcat_"))
+async def cb_admin_choose_category(callback: CallbackQuery, state: FSMContext):
+    cat_name = callback.data.replace("adm_setcat_", "")
+    await state.update_data(category_type=cat_name)
+    await callback.answer()
+    await show_brand_selection(callback, state, cat_name)
+
+@router.callback_query(AddProductState.waiting_for_category_choice, F.data == "adm_create_new_cat")
+async def cb_admin_create_new_cat_prompt(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(AddProductState.waiting_for_new_category_name)
+    await callback.message.answer("✍️ Введите <b>название нового типа продукта</b> (например: <i>Спорттовары</i>):", parse_mode="HTML", reply_markup=get_cancel_fsm_keyboard())
+    await callback.answer()
+
+@router.message(AddProductState.waiting_for_new_category_name)
+async def process_admin_new_cat_name(message: Message, state: FSMContext):
+    cat_name = message.text.strip()
+    if not cat_name:
+        await message.answer("Введите корректное название типа продукта:")
+        return
+    await db.add_category_type(cat_name)
+    await state.update_data(category_type=cat_name)
+    await show_brand_selection(message, state, cat_name)
+
+async def show_brand_selection(message_or_callback, state: FSMContext, category_type: str):
+    """Шаг выбора бренда/подтипа (Adidas, Nike... или создание нового)"""
+    brands_data = await db.get_brands_by_category(category_type)
+    await state.set_state(AddProductState.waiting_for_brand_choice)
+
+    buttons = []
+    row = []
+    for b in brands_data:
+        b_name = b["name"]
+        row.append(InlineKeyboardButton(text=b_name, callback_data=f"adm_setbrand_{b_name}"))
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+
+    buttons.append([InlineKeyboardButton(text="➕ Создать новый бренд / категорию", callback_data="adm_create_new_brand")])
+    buttons.append([InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_action")])
+
+    kb = InlineKeyboardMarkup(inline_keyboard=buttons)
+    text = f"🏷 <b>Шаг 5 из 9:</b> Выберите <b>бренд / категорию</b> для «{category_type}» или создайте новый:"
+
+    if isinstance(message_or_callback, Message):
+        await message_or_callback.answer(text, parse_mode="HTML", reply_markup=kb)
+    else:
+        await message_or_callback.message.answer(text, parse_mode="HTML", reply_markup=kb)
+
+@router.callback_query(AddProductState.waiting_for_brand_choice, F.data.startswith("adm_setbrand_"))
+async def cb_admin_choose_brand(callback: CallbackQuery, state: FSMContext):
+    brand_name = callback.data.replace("adm_setbrand_", "")
+    await state.update_data(brand=brand_name)
+    await callback.answer()
+    await prompt_article_step(callback.message, state)
+
+@router.callback_query(AddProductState.waiting_for_brand_choice, F.data == "adm_create_new_brand")
+async def cb_admin_create_new_brand_prompt(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(AddProductState.waiting_for_new_brand_name)
+    await callback.message.answer("✍️ Введите <b>название нового бренда</b> (например: <i>Nike</i> или <i>Джинсы</i>):", parse_mode="HTML", reply_markup=get_cancel_fsm_keyboard())
+    await callback.answer()
+
+@router.message(AddProductState.waiting_for_new_brand_name)
+async def process_admin_new_brand_name(message: Message, state: FSMContext):
+    brand_name = message.text.strip()
+    if not brand_name:
+        await message.answer("Введите корректное название бренда:")
+        return
+    data = await state.get_data()
+    cat_name = data.get("category_type", "Обувь")
+    await db.add_brand(cat_name, brand_name)
+    await state.update_data(brand=brand_name)
+    await prompt_article_step(message, state)
+
+async def prompt_article_step(message: Message, state: FSMContext):
+    await state.set_state(AddProductState.waiting_for_article)
+    await message.answer(
+        "🔖 <b>Шаг 6 из 9:</b> Введите <b>артикул</b> товара (или нажмите «Пропустить»):",
+        parse_mode="HTML",
+        reply_markup=get_skip_or_cancel_keyboard("skip_article")
+    )
+
+@router.message(AddProductState.waiting_for_article)
+async def process_add_article(message: Message, state: FSMContext):
+    await state.update_data(article=message.text.strip())
+    await prompt_size_step(message, state)
+
+@router.callback_query(AddProductState.waiting_for_article, F.data == "skip_article")
+async def skip_add_article(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(article="")
+    await callback.answer()
+    await prompt_size_step(callback.message, state)
+
+async def prompt_size_step(message: Message, state: FSMContext):
+    await state.set_state(AddProductState.waiting_for_size)
+    await message.answer(
+        "📏 <b>Шаг 7 из 9:</b> Введите <b>размеры</b> в наличии (например: <code>41, 42, 43, 44</code> или <code>S, M, L</code>), или нажмите «Пропустить»:",
+        parse_mode="HTML",
+        reply_markup=get_skip_or_cancel_keyboard("skip_size")
+    )
+
+@router.message(AddProductState.waiting_for_size)
+async def process_add_size(message: Message, state: FSMContext):
+    await state.update_data(size=message.text.strip())
+    await prompt_photo_step(message, state)
+
+@router.callback_query(AddProductState.waiting_for_size, F.data == "skip_size")
+async def skip_add_size(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(size="")
+    await callback.answer()
+    await prompt_photo_step(callback.message, state)
+
+async def prompt_photo_step(message: Message, state: FSMContext):
     await state.set_state(AddProductState.waiting_for_photo)
     await message.answer(
-        "🖼 <b>Шаг 4 из 6:</b> Отправьте <b>фотографию</b> товара или нажмите кнопку ниже, чтобы пропустить:",
+        "🖼 <b>Шаг 8 из 9:</b> Отправьте <b>фотографию</b> товара или нажмите кнопку «Пропустить»:",
         parse_mode="HTML",
-        reply_markup=get_skip_photo_keyboard()
+        reply_markup=get_skip_or_cancel_keyboard("skip_photo")
     )
 
 @router.message(AddProductState.waiting_for_photo, F.photo)
 async def process_add_photo(message: Message, state: FSMContext):
     photo_id = message.photo[-1].file_id
     await state.update_data(photo_id=photo_id)
-    await state.set_state(AddProductState.waiting_for_stock)
-    await message.answer(
-        "📦 <b>Шаг 5 из 6:</b> Введите <b>количество в наличии</b> (целое число, например: <code>10</code>):",
-        parse_mode="HTML",
-        reply_markup=get_cancel_fsm_keyboard()
-    )
+    await prompt_stock_step(message, state)
 
 @router.callback_query(AddProductState.waiting_for_photo, F.data == "skip_photo")
 async def process_skip_photo(callback: CallbackQuery, state: FSMContext):
     await state.update_data(photo_id=None)
+    await callback.answer()
+    await prompt_stock_step(callback.message, state)
+
+async def prompt_stock_step(message: Message, state: FSMContext):
     await state.set_state(AddProductState.waiting_for_stock)
-    await callback.message.answer(
-        "📦 <b>Шаг 5 из 6:</b> Введите <b>количество в наличии</b> (целое число, например: <code>10</code>):",
+    await message.answer(
+        "📦 <b>Шаг 9 из 9:</b> Введите <b>количество товара в наличии</b> (целое число, например: <code>10</code>):",
         parse_mode="HTML",
         reply_markup=get_cancel_fsm_keyboard()
     )
-    await callback.answer()
 
 @router.message(AddProductState.waiting_for_stock)
 async def process_add_stock(message: Message, state: FSMContext):
@@ -175,28 +317,24 @@ async def process_add_stock(message: Message, state: FSMContext):
         if stock < 0:
             raise ValueError()
     except ValueError:
-        await message.answer("❌ Введите целое число (например <code>5</code> или <code>0</code>):", parse_mode="HTML", reply_markup=get_cancel_fsm_keyboard())
+        await message.answer("❌ Введите целое неотрицательное число:", reply_markup=get_cancel_fsm_keyboard())
         return
 
     await state.update_data(stock_count=stock)
-    await state.set_state(AddProductState.waiting_for_category)
+    await state.set_state(AddProductState.waiting_for_tag)
 
     category_keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [InlineKeyboardButton(text="📦 Обычный товар", callback_data="cat_normal")],
-            [InlineKeyboardButton(text="🌟 Пометить как Акция", callback_data="cat_sale")],
+            [InlineKeyboardButton(text="🌟 Пометить как Распродажа/Акция", callback_data="cat_sale")],
             [InlineKeyboardButton(text="😎 Пометить как Новинка", callback_data="cat_new")],
             [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_action")]
         ]
     )
-    await message.answer(
-        "🏷 <b>Шаг 6 из 6:</b> Выберите категорию/метку для товара:",
-        parse_mode="HTML",
-        reply_markup=category_keyboard
-    )
+    await message.answer("🏷 Выберите статус/метку для товара:", parse_mode="HTML", reply_markup=category_keyboard)
 
-@router.callback_query(AddProductState.waiting_for_category, F.data.startswith("cat_"))
-async def process_add_category(callback: CallbackQuery, state: FSMContext):
+@router.callback_query(AddProductState.waiting_for_tag, F.data.startswith("cat_"))
+async def process_add_tag(callback: CallbackQuery, state: FSMContext):
     cat = callback.data.replace("cat_", "")
     is_sale = 1 if cat == "sale" else 0
     is_new = 1 if cat == "new" else 0
@@ -207,6 +345,10 @@ async def process_add_category(callback: CallbackQuery, state: FSMContext):
     price = data["price"]
     photo_id = data.get("photo_id")
     stock_count = data["stock_count"]
+    category_type = data.get("category_type", "Обувь")
+    brand = data.get("brand", "Другое")
+    article = data.get("article", "")
+    size = data.get("size", "")
 
     prod_id = await db.add_product(
         title=title,
@@ -214,6 +356,10 @@ async def process_add_category(callback: CallbackQuery, state: FSMContext):
         price=price,
         photo_id=photo_id,
         stock_count=stock_count,
+        category_type=category_type,
+        brand=brand,
+        article=article,
+        size=size,
         is_sale=is_sale,
         is_new=is_new
     )
@@ -221,6 +367,7 @@ async def process_add_category(callback: CallbackQuery, state: FSMContext):
 
     await callback.message.answer(
         f"✅ <b>Товар «{title}» успешно добавлен!</b> (ID: {prod_id})\n\n"
+        f"📁 Категория: <b>{category_type} > {brand}</b>\n"
         f"💰 Цена: {price:g} руб.\n"
         f"📦 Наличие: {stock_count} шт.",
         parse_mode="HTML",
@@ -279,17 +426,20 @@ async def render_admin_product_card(target_message: Message, product_id: int):
 
     status_str = "Обычный"
     if product["is_sale"]:
-        status_str = "🌟 Акция"
+        status_str = "🌟 Распродажа"
     elif product["is_new"]:
         status_str = "😎 Новинка"
 
     text = (
         f"⚙️ <b>Редактирование товара [ID: {product['id']}]</b>\n\n"
         f"📦 <b>Название:</b> {product['title']}\n"
+        f"📁 <b>Категория / Бренд:</b> {product.get('category_type', '')} > {product.get('brand', '')}\n"
+        f"🔖 <b>Артикул:</b> {product.get('article', '—')}\n"
+        f"📏 <b>Размеры:</b> {product.get('size', '—')}\n"
         f"📝 <b>Описание:</b> {product['description']}\n"
         f"💰 <b>Цена:</b> {product['price']:g} руб.\n"
         f"📊 <b>В наличии:</b> {product['stock_count']} шт.\n"
-        f"🏷 <b>Категория:</b> {status_str}\n"
+        f"🏷 <b>Статус:</b> {status_str}\n"
         f"👁 Просмотров: {product['views_count']} | 💳 Покупок: {product['buys_count']}"
     )
 
@@ -305,7 +455,7 @@ async def render_admin_product_card(target_message: Message, product_id: int):
             ],
             [
                 InlineKeyboardButton(text="📦 Наличие (Пополнить)", callback_data=f"ed_stock_{product['id']}"),
-                InlineKeyboardButton(text="🏷 Категорию", callback_data=f"ed_cat_{product['id']}")
+                InlineKeyboardButton(text="🏷 Категорию/Бренд", callback_data=f"ed_catbrand_{product['id']}")
             ],
             [InlineKeyboardButton(text="🗑 Удалить товар", callback_data=f"del_prod_{product['id']}")],
             [InlineKeyboardButton(text="🔙 К списку товаров", callback_data="admin_manage_products")]
@@ -425,33 +575,67 @@ async def process_remove_photo(callback: CallbackQuery, state: FSMContext):
     await render_admin_product_card(callback.message, prod_id)
     await callback.answer()
 
-# Редактирование Категории
-@router.callback_query(F.data.startswith("ed_cat_"))
-async def cb_ed_cat(callback: CallbackQuery):
-    prod_id = int(callback.data.replace("ed_cat_", ""))
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="📦 Обычный", callback_data=f"set_cat_normal_{prod_id}")],
-            [InlineKeyboardButton(text="🌟 Акция", callback_data=f"set_cat_sale_{prod_id}")],
-            [InlineKeyboardButton(text="😎 Новинка", callback_data=f"set_cat_new_{prod_id}")],
-            [InlineKeyboardButton(text="🔙 Назад", callback_data=f"adm_prod_{prod_id}")]
-        ]
-    )
-    await callback.message.answer("🏷 Выберите новую категорию:", reply_markup=kb)
+# Редактирование Категории и Бренда
+@router.callback_query(F.data.startswith("ed_catbrand_"))
+async def cb_ed_catbrand(callback: CallbackQuery, state: FSMContext):
+    prod_id = int(callback.data.replace("ed_catbrand_", ""))
+    categories = await db.get_all_category_types()
+    await state.set_state(EditProductState.waiting_for_edit_category_choice)
+    await state.update_data(edit_prod_id=prod_id)
+
+    buttons = []
+    row = []
+    for c in categories:
+        row.append(InlineKeyboardButton(text=c, callback_data=f"ed_setcat_{c}"))
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
+
+    buttons.append([InlineKeyboardButton(text="➕ Создать новый тип", callback_data="ed_create_new_cat")])
+    buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data=f"adm_prod_{prod_id}")])
+
+    await callback.message.answer("📁 Выберите <b>новый тип продукта</b>:", parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
     await callback.answer()
 
-@router.callback_query(F.data.startswith("set_cat_"))
-async def cb_set_cat(callback: CallbackQuery):
-    parts = callback.data.split("_")
-    cat_type = parts[2]
-    prod_id = int(parts[3])
+@router.callback_query(EditProductState.waiting_for_edit_category_choice, F.data.startswith("ed_setcat_"))
+async def cb_ed_setcat(callback: CallbackQuery, state: FSMContext):
+    cat_name = callback.data.replace("ed_setcat_", "")
+    data = await state.get_data()
+    prod_id = data["edit_prod_id"]
+    await db.update_product_field(prod_id, "category_type", cat_name)
+    await state.update_data(edit_cat_type=cat_name)
+    
+    # Переходим к выбору бренда
+    brands_data = await db.get_brands_by_category(cat_name)
+    await state.set_state(EditProductState.waiting_for_edit_brand_choice)
 
-    is_sale = 1 if cat_type == "sale" else 0
-    is_new = 1 if cat_type == "new" else 0
+    buttons = []
+    row = []
+    for b in brands_data:
+        b_name = b["name"]
+        row.append(InlineKeyboardButton(text=b_name, callback_data=f"ed_setbrand_{b_name}"))
+        if len(row) == 2:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
 
-    await db.update_product_field(prod_id, "is_sale", is_sale)
-    await db.update_product_field(prod_id, "is_new", is_new)
-    await callback.message.answer("✅ Категория обновлена!")
+    buttons.append([InlineKeyboardButton(text="➕ Создать новый бренд", callback_data="ed_create_new_brand")])
+    buttons.append([InlineKeyboardButton(text="🔙 К товару", callback_data=f"adm_prod_{prod_id}")])
+
+    await callback.message.answer(f"🏷 Выберите <b>бренд</b> для «{cat_name}»:", parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    await callback.answer()
+
+@router.callback_query(EditProductState.waiting_for_edit_brand_choice, F.data.startswith("ed_setbrand_"))
+async def cb_ed_setbrand(callback: CallbackQuery, state: FSMContext):
+    brand_name = callback.data.replace("ed_setbrand_", "")
+    data = await state.get_data()
+    prod_id = data["edit_prod_id"]
+    await db.update_product_field(prod_id, "brand", brand_name)
+    await state.clear()
+    await callback.message.answer("✅ Категория и бренд обновлены!")
     await render_admin_product_card(callback.message, prod_id)
     await callback.answer()
 
@@ -488,7 +672,7 @@ async def process_new_stock(message: Message, state: FSMContext, bot: Bot):
 
     await message.answer(f"✅ Наличие товара «{product['title']}» обновлено: <b>{new_stock} шт.</b>", parse_mode="HTML")
 
-    # Если товар пополнен (> 0), рассылаем всем пользователям уведомление!
+    # Если товар пополнен (> 0), рассылаем всем пользователям уведомление
     if new_stock > 0:
         all_users = await db.get_all_user_ids()
         notify_text = get_text(
@@ -499,8 +683,8 @@ async def process_new_stock(message: Message, state: FSMContext, bot: Bot):
         )
         kb = InlineKeyboardMarkup(
             inline_keyboard=[
-                [InlineKeyboardButton(text="🔍 Посмотреть товар", callback_data=f"user_view_prod_{prod_id}")],
-                [InlineKeyboardButton(text=get_button("to_catalog", "📦 В каталог"), callback_data="products_menu")]
+                [InlineKeyboardButton(text="🔍 Посмотреть товар", callback_data=f"user_view_prod_{prod_id}:open_catalog")],
+                [InlineKeyboardButton(text=get_button("to_catalog", "📦 В каталог"), callback_data="open_catalog")]
             ]
         )
 
@@ -664,10 +848,11 @@ async def cb_admin_orders_list(callback: CallbackQuery, state: FSMContext):
         return
 
     status_icons = {
-        "new": "🟡 Новый",
+        "pending_payment": "⏳ Ожидает оплаты",
+        "paid": "🟢 Оплачен",
         "processing": "🔵 В обработке",
         "date_assigned": "🚚 Дата назначена",
-        "completed": "🟢 Выполнен",
+        "completed": "✅ Выполнен",
         "cancelled": "🔴 Отменен"
     }
 
@@ -702,10 +887,11 @@ async def cb_adm_view_ord(callback: CallbackQuery):
         return
 
     status_names = {
-        "new": "🟡 Новый",
+        "pending_payment": "⏳ Ожидает оплаты",
+        "paid": "🟢 Оплачен",
         "processing": "🔵 В обработке",
         "date_assigned": "🚚 Дата назначена",
-        "completed": "🟢 Выполнен",
+        "completed": "✅ Выполнен",
         "cancelled": "🔴 Отменен"
     }
     status_str = status_names.get(order["status"], order["status"])
