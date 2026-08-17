@@ -178,10 +178,11 @@ async def process_order_confirmation(callback: CallbackQuery, state: FSMContext)
 
     await state.clear()
 
-    # Формируем ссылку на оплату через FreeKassa
+    # Формируем ссылку на оплату через FreeKassa SCI (https://pay.fk.money/)
     pay_url = freekassa.generate_payment_url(
         order_id=order_id,
-        amount=data["product_price"]
+        amount=data["product_price"],
+        phone=data.get("phone")
     )
 
     invoice_text = get_text(
@@ -223,13 +224,15 @@ async def cb_check_payment(callback: CallbackQuery, bot: Bot):
     # Пробуем проверить через FreeKassa REST API
     api_res = await freekassa.check_order_status_api(order_id)
     
-    # Если API подтверждает оплату (status == 1 / PAID)
+    # Если API подтверждает оплату (status == 1)
     is_paid_via_api = False
-    if isinstance(api_res, dict):
+    if isinstance(api_res, dict) and api_res.get("type") == "success":
         orders_list = api_res.get("orders", [])
         if orders_list:
             for o in orders_list:
-                if str(o.get("merchant_order_id")) == str(order_id) and o.get("status") in (1, "PAID", "paid", "success"):
+                o_pid = str(o.get("paymentId") or o.get("merchant_order_id") or "")
+                o_status = o.get("status") if "status" in o else o.get("orderStatus")
+                if o_pid == str(order_id) and o_status in (1, "1", "PAID", "paid", "success"):
                     is_paid_via_api = True
                     break
 

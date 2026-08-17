@@ -178,8 +178,10 @@ def create_webhook_app(bot: Bot) -> web.Application:
 
             logger.info(f"Received FreeKassa webhook: order={order_id_str}, amount={amount}, sign={sign}")
 
+            # Если это тестовый пинг/проверка доступности от панели FreeKassa (без параметров заказа)
             if not order_id_str or not sign:
-                return web.Response(text="BAD PARAMS", status=400)
+                logger.info("Received FreeKassa healthcheck / test ping without order params -> returning 200 YES")
+                return web.Response(text="YES", status=200)
 
             # Проверка подписи уведомления
             is_valid = freekassa.verify_webhook_sign(
