@@ -112,25 +112,7 @@ async def cb_cat_brand_products(callback: CallbackQuery):
     )
     await callback.answer()
 
-@router.callback_query(F.data.startswith("user_view_prod_"))
-async def cb_user_view_product(callback: CallbackQuery):
-    raw_data = callback.data.replace("user_view_prod_", "")
-    if ":" in raw_data:
-        parts = raw_data.split(":", 1)
-        prod_id = int(parts[0])
-        back_cb = parts[1]
-    else:
-        prod_id = int(raw_data)
-        back_cb = "open_catalog"
-
-    product = await db.get_product(prod_id)
-    if not product:
-        await callback.answer("Товар не найден или удален!", show_alert=True)
-        return
-
-    # Увеличиваем счетчик просмотров
-    await db.increment_view(prod_id)
-
+async def send_user_product_card(target_message: Message, product: dict, back_cb: str = "open_catalog"):
     status_str = ""
     if product.get("is_sale"):
         status_str = "\n🔥 <i>Товар участвует в распродаже!</i>"
@@ -176,18 +158,38 @@ async def cb_user_view_product(callback: CallbackQuery):
     keyboard = InlineKeyboardMarkup(inline_keyboard=action_buttons)
 
     if product.get("photo_id"):
-        await callback.message.answer_photo(
+        await target_message.answer_photo(
             photo=product["photo_id"],
             caption=caption,
             parse_mode="HTML",
             reply_markup=keyboard
         )
     else:
-        await callback.message.answer(
+        await target_message.answer(
             text=caption,
             parse_mode="HTML",
             reply_markup=keyboard
         )
+
+@router.callback_query(F.data.startswith("user_view_prod_"))
+async def cb_user_view_product(callback: CallbackQuery):
+    raw_data = callback.data.replace("user_view_prod_", "")
+    if ":" in raw_data:
+        parts = raw_data.split(":", 1)
+        prod_id = int(parts[0])
+        back_cb = parts[1]
+    else:
+        prod_id = int(raw_data)
+        back_cb = "open_catalog"
+
+    product = await db.get_product(prod_id)
+    if not product:
+        await callback.answer("Товар не найден или удален!", show_alert=True)
+        return
+
+    # Увеличиваем счетчик просмотров
+    await db.increment_view(prod_id)
+    await send_user_product_card(callback.message, product, back_cb=back_cb)
     await callback.answer()
 
 @router.callback_query(F.data.startswith("add_cart_"))

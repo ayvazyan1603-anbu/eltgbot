@@ -1,11 +1,12 @@
-from aiogram import Router, F, types
-from aiogram.filters import CommandStart, Command
+from aiogram import Router, F, types, Bot
+from aiogram.filters import CommandStart, CommandObject
 from aiogram.fsm.context import FSMContext
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove
 
 import database as db
 from config import get_text, is_admin
 from keyboards import get_main_menu_keyboard, get_admin_main_keyboard
+from handlers.catalog import send_user_product_card
 
 router = Router()
 
@@ -14,9 +15,30 @@ def format_welcome_text(user: types.User) -> str:
     return get_text("welcome_text", name=name)
 
 @router.message(CommandStart())
-async def cmd_start(message: Message, state: FSMContext):
+async def cmd_start(message: Message, state: FSMContext, command: CommandObject, bot: Bot):
     await state.clear()
     await db.add_or_update_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
+
+    # Принудительно удаляем обычные кнопки под клавиатурой (ReplyKeyboardRemove)
+    try:
+        cleaner = await message.answer("⚡", reply_markup=ReplyKeyboardRemove())
+        await cleaner.delete()
+    except Exception:
+        pass
+
+    # Обработка диплинков (прямых ссылок на товар, например: /start prod_123 или /start p_123)
+    args = command.args
+    if args:
+        clean_arg = args.replace("prod_", "").replace("p_", "")
+        if clean_arg.isdigit():
+            prod_id = int(clean_arg)
+            product = await db.get_product(prod_id)
+            if product:
+                await db.increment_view(prod_id)
+                await send_user_product_card(message, product, back_cb="open_catalog")
+                return
+
+    # Главное инлайн-меню
     await message.answer(
         text=format_welcome_text(message.from_user),
         reply_markup=get_main_menu_keyboard()

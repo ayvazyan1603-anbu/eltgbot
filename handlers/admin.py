@@ -430,6 +430,15 @@ async def render_admin_product_card(target_message: Message, product_id: int):
     elif product["is_new"]:
         status_str = "😎 Новинка"
 
+    bot = target_message.bot
+    try:
+        bot_user = await bot.get_me()
+        bot_username = bot_user.username
+    except Exception:
+        bot_username = "bot"
+
+    deep_link = f"https://t.me/{bot_username}?start=prod_{product['id']}"
+
     text = (
         f"⚙️ <b>Редактирование товара [ID: {product['id']}]</b>\n\n"
         f"📦 <b>Название:</b> {product['title']}\n"
@@ -440,11 +449,15 @@ async def render_admin_product_card(target_message: Message, product_id: int):
         f"💰 <b>Цена:</b> {product['price']:g} руб.\n"
         f"📊 <b>В наличии:</b> {product['stock_count']} шт.\n"
         f"🏷 <b>Статус:</b> {status_str}\n"
-        f"👁 Просмотров: {product['views_count']} | 💳 Покупок: {product['buys_count']}"
+        f"👁 Просмотров: {product['views_count']} | 💳 Покупок: {product['buys_count']}\n\n"
+        f"🔗 <b>Ссылка на товар (для пересылки):</b>\n"
+        f"<code>{deep_link}</code>\n"
+        f"<i>(Нажмите на ссылку, чтобы скопировать)</i>"
     )
 
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
+            [InlineKeyboardButton(text="🔗 Скопировать ссылку на товар", callback_data=f"get_link_{product['id']}")],
             [
                 InlineKeyboardButton(text="✏️ Название", callback_data=f"ed_title_{product['id']}"),
                 InlineKeyboardButton(text="📝 Описание", callback_data=f"ed_desc_{product['id']}")
@@ -466,6 +479,22 @@ async def render_admin_product_card(target_message: Message, product_id: int):
         await target_message.answer_photo(photo=product["photo_id"], caption=text, parse_mode="HTML", reply_markup=keyboard)
     else:
         await target_message.answer(text, parse_mode="HTML", reply_markup=keyboard)
+
+@router.callback_query(F.data.startswith("get_link_"))
+async def cb_get_product_link(callback: CallbackQuery, bot: Bot):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+    prod_id = int(callback.data.replace("get_link_", ""))
+    bot_user = await bot.get_me()
+    deep_link = f"https://t.me/{bot_user.username}?start=prod_{prod_id}"
+    await callback.message.answer(
+        f"🔗 <b>Прямая ссылка на товар:</b>\n\n"
+        f"<code>{deep_link}</code>\n\n"
+        f"<i>Нажмите на ссылку выше, чтобы скопировать её. При переходе по ней любой человек сразу откроет карточку этого товара!</i>",
+        parse_mode="HTML"
+    )
+    await callback.answer("Ссылка готова!")
 
 @router.callback_query(F.data.startswith("adm_prod_"))
 async def cb_adm_prod_card(callback: CallbackQuery):
