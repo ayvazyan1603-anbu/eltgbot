@@ -1,11 +1,11 @@
 from aiogram import Router, F, types, Bot
-from aiogram.filters import CommandStart, CommandObject
+from aiogram.filters import CommandStart, Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove
 
 import database as db
 from config import get_text, is_admin
-from keyboards import get_main_menu_keyboard, get_admin_main_keyboard
+from keyboards import get_main_menu_keyboard, get_admin_main_keyboard, get_legal_info_keyboard
 from handlers.catalog import send_user_product_card
 
 router = Router()
@@ -65,6 +65,97 @@ async def cb_cancel_action(callback: CallbackQuery, state: FSMContext):
             format_welcome_text(callback.from_user),
             reply_markup=get_main_menu_keyboard()
         )
+    await callback.answer()
+
+# ----------------- КОНТАКТЫ, ПРАВИЛА И О НАС -----------------
+
+@router.message(Command("contacts"))
+@router.message(Command("support"))
+@router.callback_query(F.data == "open_contacts")
+async def show_contacts(event: Message | CallbackQuery):
+    text = get_text("contacts_text")
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="💬 Написать в поддержку", url="https://t.me/zaharkarunnik")],
+            [InlineKeyboardButton(text="🔙 В главное меню", callback_data="back_to_main")]
+        ]
+    )
+    if isinstance(event, CallbackQuery):
+        try:
+            await event.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+        except Exception:
+            await event.message.answer(text, parse_mode="HTML", reply_markup=kb)
+        await event.answer()
+    else:
+        await event.answer(text, parse_mode="HTML", reply_markup=kb)
+
+@router.message(Command("about"))
+@router.callback_query(F.data == "open_about")
+async def show_about(event: Message | CallbackQuery):
+    text = get_text("about_text")
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🛍 В каталог", callback_data="open_catalog")],
+            [InlineKeyboardButton(text="🔙 В главное меню", callback_data="back_to_main")]
+        ]
+    )
+    if isinstance(event, CallbackQuery):
+        try:
+            await event.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+        except Exception:
+            await event.message.answer(text, parse_mode="HTML", reply_markup=kb)
+        await event.answer()
+    else:
+        await event.answer(text, parse_mode="HTML", reply_markup=kb)
+
+@router.message(Command("privacy"))
+@router.callback_query(F.data == "open_privacy")
+async def show_privacy_policy(event: Message | CallbackQuery):
+    text = get_text("privacy_policy_text")
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 К правилам и инфо", callback_data="open_legal_info")],
+            [InlineKeyboardButton(text="🏠 В главное меню", callback_data="back_to_main")]
+        ]
+    )
+    if isinstance(event, CallbackQuery):
+        try:
+            await event.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+        except Exception:
+            await event.message.answer(text, parse_mode="HTML", reply_markup=kb)
+        await event.answer()
+    else:
+        await event.answer(text, parse_mode="HTML", reply_markup=kb)
+
+@router.message(Command("terms"))
+@router.callback_query(F.data == "open_terms")
+async def show_terms(event: Message | CallbackQuery):
+    text = get_text("user_agreement_text")
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 К правилам и инфо", callback_data="open_legal_info")],
+            [InlineKeyboardButton(text="🏠 В главное меню", callback_data="back_to_main")]
+        ]
+    )
+    if isinstance(event, CallbackQuery):
+        try:
+            await event.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+        except Exception:
+            await event.message.answer(text, parse_mode="HTML", reply_markup=kb)
+        await event.answer()
+    else:
+        await event.answer(text, parse_mode="HTML", reply_markup=kb)
+
+@router.callback_query(F.data == "open_legal_info")
+async def cb_open_legal_info(callback: CallbackQuery):
+    text = (
+        "ℹ️ <b>Информация и правила сервиса 42 SHOP</b>\n\n"
+        "Выберите интересующий вас раздел:"
+    )
+    try:
+        await callback.message.edit_text(text, parse_mode="HTML", reply_markup=get_legal_info_keyboard())
+    except Exception:
+        await callback.message.answer(text, parse_mode="HTML", reply_markup=get_legal_info_keyboard())
     await callback.answer()
 
 # ----------------- МОИ ЗАКАЗЫ -----------------

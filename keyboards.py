@@ -3,10 +3,11 @@ from config import get_button
 
 def get_main_menu_keyboard() -> InlineKeyboardMarkup:
     """
-    Главное меню по Скриншоту 1:
+    Главное меню:
     - Каталог | Поиск
-    - Отзывы ↗ | Поддержка ↗
+    - Отзывы ↗ | Поддержка ↗ (@zaharkarunnik)
     - Корзина | Мои заказы
+    - ℹ️ О нас и правила
     """
     return InlineKeyboardMarkup(
         inline_keyboard=[
@@ -15,13 +16,29 @@ def get_main_menu_keyboard() -> InlineKeyboardMarkup:
                 InlineKeyboardButton(text="🔎 Поиск", callback_data="open_search")
             ],
             [
-                InlineKeyboardButton(text="💌 Отзывы ↗", url="https://t.me/tigranayvvv"),
-                InlineKeyboardButton(text="🧑‍💻 Поддержка ↗", url="https://t.me/tigranayvvv")
+                InlineKeyboardButton(text="💌 Отзывы ↗", url="https://t.me/zaharkarunnik"),
+                InlineKeyboardButton(text="🧑‍💻 Поддержка ↗", url="https://t.me/zaharkarunnik")
             ],
             [
                 InlineKeyboardButton(text="🛒 Корзина", callback_data="open_cart"),
                 InlineKeyboardButton(text="📦 Мои заказы", callback_data="open_my_orders")
+            ],
+            [
+                InlineKeyboardButton(text="ℹ️ О магазине и правила", callback_data="open_legal_info")
             ]
+        ]
+    )
+
+def get_legal_info_keyboard() -> InlineKeyboardMarkup:
+    """
+    Клавиатура раздела информации, политик и контактов
+    """
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🔒 Политика конфиденциальности", callback_data="open_privacy")],
+            [InlineKeyboardButton(text="📜 Пользовательское соглашение", callback_data="open_terms")],
+            [InlineKeyboardButton(text="📞 Контакты поддержки", callback_data="open_contacts")],
+            [InlineKeyboardButton(text="🔙 В главное меню", callback_data="back_to_main")]
         ]
     )
 
@@ -45,7 +62,7 @@ def get_catalog_categories_keyboard(categories: list[str]) -> InlineKeyboardMark
 
 def get_brands_keyboard(category_type: str, brands_data: list[dict]) -> InlineKeyboardMarkup:
     """
-    Меню брендов/подтипов по Скриншотам 3 и 4:
+    Меню брендов/подтипов:
     - Весь ассортимент
     - Сетка брендов с количеством: [Adidas [23], Nike [40]...]
     - ⬅️ Назад
@@ -69,7 +86,7 @@ def get_brands_keyboard(category_type: str, brands_data: list[dict]) -> InlineKe
 
 def get_search_menu_keyboard() -> InlineKeyboardMarkup:
     """
-    Меню поиска по Скриншоту 5:
+    Меню поиска:
     - Распродажа
     - Поиск по артикулу
     - Поиск по размеру
